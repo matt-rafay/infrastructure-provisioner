@@ -1,0 +1,15 @@
+kind: Cluster
+metadata:
+  name: ${cluster_name}
+  project: ${project}
+spec:
+  type: gke
+  blueprint: ${blueprint_name}
+  %{~ if blueprint_version != "null" ~}
+  blueprintversion: ${blueprint_version}
+  %{~ endif ~}
+  gkeconfigfile: deployment.yaml
+  gkeproject: ${gcp_project}
+  gkeregion: ${region}
+  gkezone: ${zone}
+  location: gcp/${region}

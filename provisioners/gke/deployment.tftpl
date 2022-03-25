@@ -1,0 +1,182 @@
+resources:
+%{ if include_vpc ~}
+  - name: ${vpc_name}
+    type: compute.v1.network
+    properties:
+      autoCreateSubnetworks: false
+      routingConfig:
+        routingMode: REGIONAL
+        mtu: 1460
+  
+  - name: ${subnet_name}
+    type: compute.v1.subnetwork
+    properties:
+      ipCidrRange: ${subnet_cidr}
+      network: $(ref.${vpc_name}.selfLink)
+      privateIpGoogleAccess: true
+      region: ${region}
+    metadata:
+      dependsOn:
+        - ${vpc_name}
+  
+  - name: ${vpc_name}-default-egress
+    type: compute.v1.firewall
+    properties:
+      allowed:
+        - IPProtocol: all
+      destinationRanges:
+        - 0.0.0.0/0
+      direction: EGRESS
+      network: $(ref.${vpc_name}.selfLink)
+      priority: 1000
+    metadata:
+      dependsOn:
+        - ${vpc_name}
+  
+  - name: ${vpc_name}-default-ingress
+    type: compute.v1.firewall
+    properties:
+      allowed:
+        - IPProtocol: tcp
+          ports:
+            - "22"
+            - "80"
+            - "443"
+            - "3443"
+        - IPProtocol: icmp
+      direction: INGRESS
+      network: $(ref.${vpc_name}.selfLink)
+      priority: 1000
+      sourceRanges:
+        - 0.0.0.0/0
+    metadata:
+      dependsOn:
+        - ${vpc_name}
+  
+%{ endif ~}
+%{ if include_nat ~}
+  - name: ${router_name}
+    type: compute.v1.router
+    properties:
+      nats:
+        - name: ${router_name}-nat
+          natIpAllocateOption: AUTO_ONLY
+          sourceSubnetworkIpRangesToNat: ALL_SUBNETWORKS_ALL_IP_RANGES
+      network: %{ if include_vpc }$(ref.${vpc_name}.selfLink)%{ else }${vpc}%{ endif }
+      region: ${region}
+%{ if include_vpc ~}
+    metadata:
+      dependsOn:
+        - ${vpc_name}
+%{ endif ~}
+  
+%{ endif ~}
+%{~ if include_cluster ~}
+  - name: ${cluster_name}
+    type: container.v1.cluster
+    properties:
+      cluster:
+        addonsConfig:
+          dnsCacheConfig:
+            enabled: ${gke_add_on_dns_cache}
+          gcePersistentDiskCsiDriverConfig:
+            enabled: true
+          horizontalPodAutoscaling:
+            disabled: %{ if gke_add_on_hpa }false%{ else }true%{ endif }
+          httpLoadBalancing:
+            disabled: %{ if gke_add_on_http_lb }false%{ else }true%{ endif }
+          kubernetesDashboard:
+            disabled: true
+          networkPolicyConfig:
+            disabled: %{ if gke_network_policy }false%{ else }true%{ endif }
+        databaseEncryption:
+          state: DECRYPTED
+        defaultMaxPodsConstraint:
+          maxPodsPerNode: ${node_pods}
+        description: "${description}"
+        initialClusterVersion: ${gke_version}
+        ipAllocationPolicy:
+          clusterIpv4CidrBlock: ${gke_cluster_cidr}
+          servicesIpv4CidrBlock: ${gke_service_cidr}
+          useIpAliases: true
+        locations:
+          - ${zone}
+        %{~ if length(gke_authorized_networks) > 0 ~}
+        masterAuthorizedNetworksConfig:
+          cidrBlocks:
+            %{~ for authorized in gke_authorized_networks ~}
+            - cidrBlock: ${authorized.cidr}
+              displayName: ${authorized.name}
+            %{~ endfor ~}
+          enabled: true
+        %{~ endif ~}
+        network: %{ if include_vpc }$(ref.${vpc_name}.selfLink)%{ else }${vpc}%{ endif }
+        networkConfig:
+          datapathProvider: LEGACY_DATAPATH
+        %{~ if gke_network_policy ~}
+        networkPolicy:
+          enabled: true
+          provider: CALICO
+        %{~ endif ~}
+        %{~ if length(gke_node_pools) > 0 ~}
+        nodePools:
+          %{~ for node_pool in gke_node_pools ~}
+          - name: ${node_pool}
+            autoscaling:
+              enabled: true
+              maxNodeCount: ${node_pool_max}
+              minNodeCount: ${node_pool_min}
+            config:
+              diskSizeGb: ${node_disk_size}
+              diskType: ${node_disk_type}
+              imageType: ${gke_image_type}
+              machineType: ${node_type}
+              metadata:
+                disable-legacy-endpoints: "true"
+              oauthScopes:
+                %{~ for oauth_scope in gke_oauth_scopes ~}
+                - ${oauth_scope}
+                %{~ endfor ~}
+            initialNodeCount: ${node_pool_count}
+            %{~ if length(gke_locations) > 0 ~}
+            locations:
+              %{~ for location in gke_locations ~}
+              - ${location}
+              %{~ endfor ~}
+            %{~ endif ~}
+            management:
+              autoRepair: ${gke_auto_repair}
+              autoUpgrade: ${gke_auto_upgrade}
+            version: ${gke_version}
+            upgradeSettings:
+              maxSurge: 1
+          %{~ endfor ~}
+        %{~ endif ~}
+        %{~ if gke_private_cluster ~}
+        privateClusterConfig:
+          enablePrivateEndpoint: ${gke_private_endpoint}
+          enablePrivateNodes: true
+          masterGlobalAccessConfig:
+            enabled: true
+          masterIpv4CidrBlock: ${gke_master_cidr}
+        %{~ endif ~}
+        %{~ if gke_release_channel != "null" ~}
+        releaseChannel:
+          channel: ${gke_release_channel}
+        %{~ endif ~}
+        %{~ if length(gke_resource_labels) > 0 ~}
+        resourceLabels:
+          %{~ for key in keys(gke_resource_labels) ~}
+          ${key}: "${lookup(gke_resource_labels, key)}"
+          %{~ endfor ~}
+        %{~ endif ~}
+        shieldedNodes:
+          enabled: true
+        subnetwork: %{ if include_vpc }$(ref.${subnet_name}.selfLink)%{ else }${subnet}%{ endif }
+      zone: ${zone}
+%{ if include_nat ~}
+    metadata:
+      dependsOn:
+        - ${router_name}
+%{ endif ~}
+%{ endif ~}
